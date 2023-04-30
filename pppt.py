@@ -1,30 +1,41 @@
-"""Netwrk Status... and latency and stuff"""
+"""
+PPPT - Python Ping Plot Tool - Ping graph, latency, and jitter.
+
+Imports Pyping...
+:homepage: https://github.com/toxinu/Pyping/
+:copyleft: 1989-2011 by the python-ping team, see AUTHORS for more details.
+:license: GNU GPL v2, see LICENSE for more details.
+"""
 #!/usr/bin/env python3.6
 import os
 import curses
 import curses.textpad
 import curses.panel
-import platform
-import subprocess
 import threading
 import socket
 import collections
 import time
 import argparse
+import pyping_4
 
+CONST_ESCAPE_KEY = 27
 
 def prepare_curses():
     """Setup terminal for curses operations."""
+    stdscr = curses.initscr()
     stdscr.erase()
     stdscr.keypad(True)
     curses.noecho()
     curses.cbreak()
     curses.curs_set(0)
     curses.start_color()
-    curses.init_pair(1, curses.COLOR_WHITE, curses.COLOR_BLACK)
+    curses.init_pair(4, curses.COLOR_WHITE, curses.COLOR_BLACK)
     curses.init_pair(2, curses.COLOR_YELLOW, curses.COLOR_BLACK)
     curses.init_pair(3, curses.COLOR_RED, curses.COLOR_BLACK)
+    curses.init_pair(5, curses.COLOR_CYAN, curses.COLOR_BLACK)
+    curses.init_pair(1, curses.COLOR_GREEN, curses.COLOR_BLACK)
     stdscr.bkgdset(curses.color_pair(1))
+    return stdscr
     
 def end_curses():
     """Gracefully reset terminal to normal settings."""
@@ -35,83 +46,116 @@ def end_curses():
     os.system('reset')
 
 def draw_win(height, width, y_start, x_start):
+    """Returns window derived from stdscr."""
     window = stdscr.derwin(height, width, y_start, x_start)
     window.bkgd(curses.color_pair(1))
     window.keypad(1)
     return window
 
-def get_ip_address(ip_to_ping):
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    s.connect((ip_to_ping, 80))
-    return s.getsockname()[0]
-            
-def ping(host_or_ip):
-    if platform.system().lower() == 'windows':
-        command = ['ping', '-l', host_or_ip]
+def check_window_size(window, screen_height, screen_width):
+    resize = curses.is_term_resized(screen_height, screen_width)
+
+    # Action in loop if resize is True:
+    if resize is True:
+        y, x = window.getmaxyx()
+        curses.resizeterm(y, x)
+        stdscr.noutrefresh()
+        screen_height, screen_width = stdscr.getmaxyx()
+        resize = False
+        return screen_height, screen_width
     else:
-        command = ['ping', host_or_ip]
-        proc = subprocess.Popen(
-                    command,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    bufsize=0,
-                    universal_newlines=True
-                    )
-    return proc
-
-class get_output:
-    def __init__(self, ping, host):
-        self.ping_process = ping(host)
-        self.read()
+        return screen_height, screen_width
         
-    def read(self):
-        packets = 0
-        packets_lost = 0
-        latency = 0
-        time_out = 1
-        queue_packets.append(packets)
-        queue_packets_lost.append(packets_lost)
-        queue_latency.append(latency)
-        queue_time_out.append(time_out)     
-        for line in iter(self.ping_process.stdout.readline, ''):
-            if not line:
-                break
-            elif line.startswith('64'):
-                packets += 1
-                queue_packets[-1] = packets
-                time_index = line.find('time=')
-                ms_index = line.find(' ms')
-                raw_num = line[time_index+5:ms_index].strip()
-                latency = convert_ms(raw_num)
-                queue_latency[-1] = latency
-                queue_time_out[-1] = 1
-                time.sleep(.001)
-            elif line.startswith('Request'):
-                packets += 1
-                packets_lost += 1
-                queue_packets_lost[-1] = packets_lost
-                queue_packets[-1] = packets
-                queue_time_out[-1] = 0
-                
+        
+def get_ip_address_simple(arg1, arg2):
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(.3)
+        sock.connect(('10.254.254.254', 1))
+        ip_address = sock.getsockname()[0]
+
+    except:
+        ip_address = None
+    finally:
+        queue_my_ip_address.append(ip_address)
+        while True:
+            try:
+                time.sleep(3)
+                queue_my_ip_address[-1] = sock.getsockname()[0]
+            except:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.connect(('10.254.254.254', 1))
+
+class get_ip_address:
+    def __init__(self, ip_to_ping):
+        self.remote_ip = ip_to_ping
+        sock = self.estab_socket()
+        sock.settimeout(1)
+        
+        self.connect(sock)
+        self.check(sock)
+        
+    def estab_socket(self):
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        return self.sock
+        
+    def connect(self, sock):
+        try:
+            sock.connect(('dns.google', 1))
+        except TimeoutError:
+            return
+        
+    def check(self, sock):
+        while True:
+            try:
+                self.ip_address = sock.getsockname()[0]
+            except TimeoutError:
+                self = self.connect(sock)
+
+            queue_my_ip_address = self.ip_address
+    
+def ping(destination, count, timeout, packet_size, *args, **kwargs):
+	p = pyping_4.Ping(destination, queue_latency, queue_packets, queue_packets_lost, queue_time_out, packet_header, trace_route, timeout, packet_size, *args, **kwargs)
+	return p.run(count)
+
 class Main:
-    def __init__(self, main_window, ip_to_ping):
+    def __init__(self, main_window, ip_to_ping, count):
+        screen_height, screen_width = stdscr.getmaxyx()
 
-        graph_size = 40
+        jitters = jitter()
+        bar = bar_graph()
+        queue_packets_lost.append(0)
+        self.packets_lost = 0
+
+        timeout = 1000
+        packet_size=55
+        graph_top = 5
         loss = 0
-        
         min_time = 0
         max_time = 0
         avg_time = 0
-        jitters = jitter()
         jitt = 0
-        bar = bar_graph()
 
-        my_ip_address = get_ip_address(ip_to_ping)
-
-        t = threading.Thread(
-            name='PingThread', target=get_output, args=(ping, ip_to_ping), daemon=True)
-        t.start()
         
+        #my_ip_address = get_ip_address_simple(ip_to_ping)
+        #ip_address = get_ip_address(ip_to_ping)
+        #my_ip_address = ip_address.ip_address
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        IPChecker = threading.Thread(
+            name='IPChecker', target=get_ip_address_simple, args=('1', '2'), daemon=True)
+        IPChecker.start()
+        
+        PingThreadObj = threading.Thread(
+            name='PingThread', target=ping, args=(ip_to_ping, count, timeout, packet_size), daemon=True)
+        
+        PingThreadObj.start()
+        
+        
+        
+        #my_ip_address = get_ip_address_simple(ip_to_ping)
+        
+        timeout = timeout / 1000
+
         ready_to_exit = False
         
         while len(queue_latency) != 1:
@@ -119,30 +163,53 @@ class Main:
 
         while queue_latency[0] == 0:
             waiting = 1
+            
+            
 
         while ready_to_exit is not True:
-            if len(queue_latency) > graph_size:
-                queue_latency.popleft()
+
             
-            latency = queue_latency[-1]
-            self.packets_lost = queue_packets_lost[-1]
+            screen_height, screen_width = check_window_size(main_window, screen_height, screen_width)
+            self.graph_width = int(screen_width  - 10)
+            graph_height = screen_height
+            hist.set_length(int(self.graph_width))
+
+            if len(queue_latency) > self.graph_width:
+                queue_latency.popleft()
+                
+                
+            hist.times = trim_array(hist.times, self.graph_width)    
+            
+            latency = queue_latency[-1][0]
+            if queue_packets_lost[-1] > self.packets_lost:
+                
+                self.packets_lost = queue_packets_lost[-1]
+                latency = 0
             self.packets = queue_packets[-1]
 
-            if queue_time_out[-1] == 0:
-                latency = 0
-                
+            min_rtt = queue_latency[-1][5]
+            avg_rtt = queue_latency[-1][6]
+            max_rtt = queue_latency[-1][7]
+            main_window.addstr(3, 0, "min: " + min_rtt +" avg: "+avg_rtt+" max: " + max_rtt)
+            
             hist.add(latency)
             min_time = hist.min_val()
             max_time = hist.max_val(hist.times)
             avg_time = hist.avg(latency)
+            hist_array_length = len(hist.times)
             
-
             if len(hist.times) > 1:
                 jitt = jitters.calc(hist.times)
-                
+            
             if self.packets_lost > 1:
                 loss = packet_loss(self.packets, self.packets_lost)
-
+            
+            if len(queue_my_ip_address) != 1:
+                my_ip_address = 'searching'
+            else:
+            
+               my_ip_address = queue_my_ip_address[-1]
+            
             top_info(main_window, 
                      update_all_views, 
                      self.packets, 
@@ -151,24 +218,80 @@ class Main:
                      my_ip_address, 
                      ip_to_ping, 
                      latency, 
-                     jitt
+                     jitt,
+                     hist_array_length,
+                     self.graph_width
                      )
-
-            bar.bar_graph(main_window, 5, update_all_views, hist,min_time,max_time, avg_time)
+            
+            try:
+                bar.bar_graph(self, main_window, graph_top, self.graph_width, graph_height, update_all_views, hist,min_time,max_time, avg_time, timeout)
+            except KeyboardInterrupt:
+                ready_to_exit = True
             curses.doupdate()
             something = 1
+            event = key_press(main_window)
+            
+            if count is not None:
+                if count == self.packets:
+                    ready_to_exit = True
+                    time.sleep(5)
+
+            ready_to_exit = self.exit_main_loop(event, ready_to_exit)
+
+
+    def exit_main_loop(self, event, ready_to_exit):
+        if event == CONST_ESCAPE_KEY or ready_to_exit == True:
+            return True
+        else:
+            return False
         
+        
+def new_pad():
+    height, width = stdscr.getmaxyx()
+    pad = curses.newpad(height, width)
+    pad.scrollok(True)
+    return pad
+
+def trim_array(array, length):
+    if length < len(array):
+        difference = len(array) - length
+
+        del(array[0:difference])
+        return array    
+    else: return array
+    
+def key_press(window_obj):
+    window_obj.nodelay(True)
+    try:
+        key = window_obj.getch()
+    except KeyboardInterrupt:
+        return
+    if key:
+        key_press_event(key)
+         
+def key_press_event(key):
+    CONST_NO_KEY_PRESSED = -1
+    if key == CONST_NO_KEY_PRESSED:
+        pass
+    else:
+        event_response(key)
+
+def event_response(event):
+    if event is CONST_ESCAPE_KEY:
+        return CONST_ESCAPE_KEY
+    else:
+        pass
+    
 def update_all_views(window):
     stdscr.noutrefresh()
     window.noutrefresh()
        
-def top_info(window, update_all_views, packets, packets_lost, packet_loss, src_ip, dest_ip, latency, jitter):
+def top_info(window, update_all_views, packets, packets_lost, packet_loss, src_ip, dest_ip, latency, jitter, history_length, graph_width):
     screen_width = stdscr.getmaxyx()[1]
     spacing = screen_width * ' '
-    window.addstr(0, 0, spacing)
-    window.addstr(1, 0, spacing)
-    window.addstr(2, 0, spacing)
-    window.addstr(0, 0, str(src_ip) + ' > ' + str(dest_ip))
+    text_color = curses.color_pair(2)
+    window.addstr(4, 0, str(history_length) + ' ' + str( graph_width), text_color)
+    window.addstr(0, 0, str(src_ip) + ' > ' + str(dest_ip), text_color)
     window.addstr(1, 0, str('Packets: ') + str(packets) 
                         + str(' Lost: ') + str(packets_lost) 
                         + str(' Loss: ') + str(packet_loss) + str('%') 
@@ -180,6 +303,8 @@ def top_info(window, update_all_views, packets, packets_lost, packet_loss, src_i
         color = curses.color_pair(2)
     else:
         color = curses.color_pair(1)
+        
+    latency = round(latency, 3)
 
     window.addstr(2, 0, str('Latency: ') + str(latency) + str(' ms') + str(' Jitter: ') + str(jitter) + str(' ms'), color)
     update_all_views(window)
@@ -220,20 +345,23 @@ class bar_graph:
     def __init__(self):
         x = 0
 
-    def bar_graph(self, window, bar_graph_top, update, history, min, max, avg_time):
-        time.sleep(.80)
+    def bar_graph(self, main, window, bar_graph_top, graph_width, graph_height, update, history, min, max, avg_time, timeout):
         ping_max = max
         ping_min = min
-        ping_time = hist.times[-1]
-        self.bar_graph_bottom = bar_graph_top + 10
+        latency = hist.times[-1]
+        timeout = timeout * 1000
+        # if timeout > latency:
+        #     sleep_time = ((timeout - latency) / 1000)
+        #     time.sleep(sleep_time)
+        time.sleep(.2)
+        
         self.window = window
         self.update = update
         graph_top = 5
-        graph_bottom = 14
-        self.x_axis_labels(ping_min,avg_time,ping_max)
-        scaled_times_hist = self.draw_bars(history, ping_max, ping_min, graph_top, graph_bottom)
-        clean_graph(self.window, self.update)
-        self.scroll(scaled_times_hist)
+        clean_graph(self.window, self.update, bar_graph_top, graph_height, graph_width)
+        self.x_axis_labels(ping_min,avg_time,ping_max, bar_graph_top, graph_height)
+        scaled_times_hist = self.draw_bars(history, ping_max, ping_min, graph_top, graph_height)
+        self.scroll(main, scaled_times_hist, graph_height)
         self.update(self.window)
 
     def draw_bars(self, history, ping_max, ping_min, graph_top, graph_bottom):
@@ -244,30 +372,36 @@ class bar_graph:
             scaled_times_hist.append(new_time)
         return scaled_times_hist
         
-    def x_axis_labels(self, ping_min, avg_time, ping_max):
+    def x_axis_labels(self, ping_min, avg_time, ping_max, bar_graph_top, bar_graph_bottom):
+        
+        ping_max = round(ping_max, 3)
+        avg_time = round(avg_time, 3)
+        ping_min = round(ping_min, 3)
+        
+        graph_middle = round(((bar_graph_bottom - bar_graph_top) / 2) + bar_graph_top)
+        self.window.addstr(bar_graph_top, 0, str(ping_max), curses.color_pair(2))
+        self.window.addstr(graph_middle, 0, str(avg_time), curses.color_pair(2))
+        self.window.addstr(bar_graph_bottom - 1, 0, str(ping_min), curses.color_pair(2))
 
-        self.window.addstr(5, 0, '    ')
-        self.window.addstr(5, 0, str(ping_max))
-
-        self.window.addstr(10, 0, '    ')
-        self.window.addstr(10, 0, str(avg_time))
-
-        self.window.addstr(14, 0, '    ')
-        self.window.addstr(14, 0, str(ping_min))
-
-    def scroll(self, scaled_times_hist):
-        graph_bars_horizontal = 5
+    def scroll(self, main, scaled_times_hist, bar_graph_bottom):
+        graph_bars_horizontal = 7
         for x in scaled_times_hist:
             graph_bars_horizontal += 1
-            for bar_height in reversed(range(x, self.bar_graph_bottom)):                
-                bar_fill = '#'
-                self.window.addstr(bar_height, graph_bars_horizontal, bar_fill, curses.color_pair(1))
+            for bar_height in reversed(range(x, bar_graph_bottom)):                
+                bar_fill = '=='
+                if main.graph_width < len(scaled_times_hist):
+                    pass
+                else:
+                   self.window.addstr(bar_height, graph_bars_horizontal, bar_fill, curses.color_pair(1))
         self.update(self.window)
         
 class history:
-    def __init__(self) -> None:
+    def __init__(self, history_length) -> None:
         self.times = []
-        self.history_length = 40
+        self.set_length(history_length)
+    
+    def set_length(self, length):
+        self.history_length = length
         
     def replace_last(self, new_time):
         array_length = len(self.times)
@@ -279,7 +413,7 @@ class history:
                 self.times[i] = self.times[i+1]
     
     def add(self, pings):
-        if len(self.times) > self.history_length:
+        if len(self.times) >= self.history_length:
             self.replace_last(pings)
         else:
             self.times.append(pings)
@@ -295,25 +429,22 @@ class history:
     def min_val(self):
         min_list = [v for v in self.times if v != 0]
         try:
-            
             return min(min_list)
         except ValueError:
             return 0
         
     def max_val(self, pings):
-        
         try:
             return max(self.times)
         except ValueError:
             return 200
 
-def clean_graph(window, update):
-    bar_graph_top = 5
-    bar_graph_bottom = 15
-    graph_width = 41
-    for x in range(graph_width):
+def clean_graph(window, update, bar_graph_top, bar_graph_bottom, graph_width):
+    screen_width = stdscr.getmaxyx()[1]
+    screen_width = screen_width - 1
+    for x in range(screen_width):
         for height in range(bar_graph_top,bar_graph_bottom):
-            window.addstr(height, x+6, ' ')
+            window.addstr(height, x, ' ') # +6
     update(window)
     
 def not_below_zero(number):
@@ -333,22 +464,26 @@ def scale_numbers(value, old_min, old_max, new_min, new_max):
     return value_int
 
 
-if __name__ == '__main__':
-
+def argument_parser():
     parser = argparse.ArgumentParser(description='Graph pings.', usage='%(prog)s [options]')
-    parser.add_argument('ip', help='IP Address', nargs='?', type=str, default='8.8.4.4')
+    parser.add_argument('-i', dest='ip', help='IP Address', nargs='?', type=str, default='dns.google')
+    parser.add_argument('-c', dest='count', help='Count', nargs='?', type=int)
     args = parser.parse_args()
-    
-    stdscr = curses.initscr()
-    screen_height, screen_width = stdscr.getmaxyx()
-    prepare_curses()
+    return args
 
+if __name__ == '__main__':
+    args = argument_parser()    
+    stdscr = prepare_curses()
+    screen_height, screen_width = stdscr.getmaxyx()
     main_window = draw_win(screen_height,screen_width,0,0)
-    hist = history()
+    hist = history(screen_width)
     queue_latency = collections.deque()
     queue_packets = collections.deque()
     queue_packets_lost = collections.deque()
     queue_time_out = collections.deque()
+    queue_my_ip_address = collections.deque()
+    packet_header = collections.deque()
+    trace_route = collections.deque()
     
-    main = Main(main_window, args.ip)
+    main = Main(main_window, args.ip, args.count)
     end_curses()
