@@ -22,6 +22,10 @@ css
 Copy code
 python ping_plot.py -h example.com -t 2 -i 0.5 -c 100 -l 100
 
-License
+## License
 
-This tool is licensed under the MIT License. Feel free to use and modify it as you see fit.
+This project is licensed under the MIT License. See the LICENSE file for details.
+
+## Contributions
+
+Contributions to this project are welcome. If you would like to contribute, please fork the repository and submit a pull request.
