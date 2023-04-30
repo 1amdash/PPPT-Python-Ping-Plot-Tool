@@ -1,0 +1,27 @@
+Python Ping Plot and Graphing Tool
+
+This is a Python-based tool that allows you to monitor the latency and packet loss of a network connection by sending ICMP Echo Request packets to a specified host or IP address and plotting the results in real-time. The tool can be useful for troubleshooting network issues and monitoring network performance.
+
+Installation
+
+The tool requires Python 3.x and the following packages to be installed:
+curses
+threading
+socket
+collections
+argparse
+
+
+
+Usage
+
+To use the tool, simply run the ntwrkstatus3.py script with the desired arguments. The following arguments are available:
+
+
+css
+Copy code
+python ping_plot.py -h example.com -t 2 -i 0.5 -c 100 -l 100
+
+License
+
+This tool is licensed under the MIT License. Feel free to use and modify it as you see fit.
